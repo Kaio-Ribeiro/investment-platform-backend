@@ -4,10 +4,10 @@ from app.models.base import Base
 from app.models.user import User
 from app.models.client import Client
 from logging.config import fileConfig
-from sqlalchemy.engine import Connection  # ← ADICIONE ESTA LINHA
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from app.models.asset import Asset  # ← Nova linha
 
 from alembic import context
 
