@@ -7,7 +7,9 @@ from logging.config import fileConfig
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy import pool
-from app.models.asset import Asset  # ← Nova linha
+from app.models.asset import Asset
+from app.models.allocation import Allocation
+from app.models.movement import Movement
 
 from alembic import context
 
