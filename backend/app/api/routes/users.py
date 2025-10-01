@@ -1,42 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from jose import JWTError, jwt
 from typing import Optional
 
 from app.core.database import get_db
-from app.core.security import SECRET_KEY, ALGORITHM, get_password_hash, verify_password
+from app.core.dependencies import get_current_active_user
+from app.core.security import get_password_hash, verify_password
 from app.models.user import User
-from app.schemas.auth import TokenData
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 
 router = APIRouter()
-security = HTTPBearer()
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
-):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-    )
-    
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-        token_data = TokenData(email=email)
-    except JWTError:
-        raise credentials_exception
-    
-    result = await db.execute(select(User).where(User.email == token_data.email))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise credentials_exception
-    return user
 
 # NOVOS ENDPOINTS ↓
 
@@ -118,5 +91,5 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
     return {"message": "User deleted successfully"}
 
 @router.get("/me", response_model=UserSchema)
-async def read_users_me(current_user: User = Depends(get_current_user)):
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
