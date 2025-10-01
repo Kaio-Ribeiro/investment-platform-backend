@@ -5,9 +5,11 @@ from sqlalchemy import func
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_active_user
 from app.models.allocation import Allocation
 from app.models.client import Client
 from app.models.asset import Asset
+from app.models.user import User
 from app.schemas.allocation import Allocation as AllocationSchema, AllocationCreate, AllocationWithDetails
 
 router = APIRouter()
@@ -17,6 +19,7 @@ async def read_allocations(
     client_id: Optional[int] = Query(None),
     skip: int = 0,
     limit: int = 100,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = (
@@ -56,18 +59,30 @@ async def read_allocations(
     ]
 
 @router.post("/", response_model=AllocationSchema)
-async def create_allocation(allocation: AllocationCreate, db: AsyncSession = Depends(get_db)):
-    # Verificar se cliente existe
+async def create_allocation(
+    allocation: AllocationCreate, 
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Verificar se cliente existe e está ativo
     client_result = await db.execute(select(Client).where(Client.id == allocation.client_id))
     client = client_result.scalar_one_or_none()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if not client.is_active:
+        raise HTTPException(status_code=400, detail="Cannot create allocation for inactive client")
     
     # Verificar se asset existe
     asset_result = await db.execute(select(Asset).where(Asset.id == allocation.asset_id))
     asset = asset_result.scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Validações de negócio
+    if allocation.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+    if allocation.buy_price <= 0:
+        raise HTTPException(status_code=400, detail="Buy price must be greater than zero")
     
     db_allocation = Allocation(**allocation.dict())
     db.add(db_allocation)
@@ -76,7 +91,10 @@ async def create_allocation(allocation: AllocationCreate, db: AsyncSession = Dep
     return db_allocation
 
 @router.get("/total-allocation")
-async def get_total_allocation(db: AsyncSession = Depends(get_db)):
+async def get_total_allocation(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(
         select(func.sum(Allocation.quantity * Allocation.buy_price))
     )
@@ -84,7 +102,11 @@ async def get_total_allocation(db: AsyncSession = Depends(get_db)):
     return {"total_allocation": float(total)}
 
 @router.get("/client/{client_id}/allocation")
-async def get_client_allocation(client_id: int, db: AsyncSession = Depends(get_db)):
+async def get_client_allocation(
+    client_id: int, 
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(
         select(func.sum(Allocation.quantity * Allocation.buy_price))
         .where(Allocation.client_id == client_id)

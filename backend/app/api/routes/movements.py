@@ -6,8 +6,10 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_active_user
 from app.models.movement import Movement, MovementType
 from app.models.client import Client
+from app.models.user import User
 from app.schemas.movement import Movement as MovementSchema, MovementCreate, MovementWithDetails, CaptationSummary
 
 router = APIRouter()
@@ -19,6 +21,7 @@ async def read_movements(
     end_date: Optional[date] = Query(None),
     skip: int = 0,
     limit: int = 100,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = (
@@ -54,12 +57,45 @@ async def read_movements(
     ]
 
 @router.post("/", response_model=MovementSchema)
-async def create_movement(movement: MovementCreate, db: AsyncSession = Depends(get_db)):
-    # Verificar se cliente existe
+async def create_movement(
+    movement: MovementCreate, 
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Verificar se cliente existe e está ativo
     client_result = await db.execute(select(Client).where(Client.id == movement.client_id))
     client = client_result.scalar_one_or_none()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if not client.is_active:
+        raise HTTPException(status_code=400, detail="Cannot create movement for inactive client")
+    
+    # Validações de negócio
+    if movement.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+    
+    # Para saques, verificar se cliente tem saldo suficiente (opcional - depende da regra de negócio)
+    if movement.type == MovementType.withdrawal:
+        # Calcular saldo atual do cliente
+        deposits_result = await db.execute(
+            select(func.sum(Movement.amount))
+            .where(Movement.client_id == movement.client_id, Movement.type == MovementType.deposit)
+        )
+        total_deposits = deposits_result.scalar() or 0
+        
+        withdrawals_result = await db.execute(
+            select(func.sum(Movement.amount))
+            .where(Movement.client_id == movement.client_id, Movement.type == MovementType.withdrawal)
+        )
+        total_withdrawals = withdrawals_result.scalar() or 0
+        
+        current_balance = total_deposits - total_withdrawals
+        
+        if movement.amount > current_balance:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient balance. Current balance: {current_balance}, Withdrawal amount: {movement.amount}"
+            )
     
     db_movement = Movement(**movement.dict())
     db.add(db_movement)
@@ -71,6 +107,7 @@ async def create_movement(movement: MovementCreate, db: AsyncSession = Depends(g
 async def get_total_captation(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     # Se não fornecer datas, usa último mês
@@ -113,6 +150,7 @@ async def get_total_captation(
 async def get_captation_by_client(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     if not end_date:
