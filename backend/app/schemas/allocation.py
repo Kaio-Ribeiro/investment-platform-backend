@@ -1,13 +1,19 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 from datetime import date
 from typing import Optional
 
 class AllocationBase(BaseModel):
-    client_id: int
-    asset_id: int
-    quantity: float
-    buy_price: float
+    client_id: int = Field(..., gt=0, description="Client ID must be greater than 0")
+    asset_id: int = Field(..., gt=0, description="Asset ID must be greater than 0")
+    quantity: float = Field(..., gt=0, description="Quantity must be greater than 0")
+    buy_price: float = Field(..., gt=0, description="Buy price must be greater than 0")
     buy_date: date
+    
+    @validator('buy_date')
+    def validate_buy_date(cls, v):
+        if v > date.today():
+            raise ValueError('Buy date cannot be in the future')
+        return v
 
 class AllocationCreate(AllocationBase):
     pass
