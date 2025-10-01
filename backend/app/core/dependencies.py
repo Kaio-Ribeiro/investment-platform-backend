@@ -1,7 +1,8 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 from jose import JWTError, jwt
 from app.core.database import get_db
 from app.core.config import settings
@@ -12,7 +13,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
+    db = Depends(get_db)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -29,8 +30,15 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    result = await db.execute(select(User).where(User.email == token_data.email))
-    user = result.scalar_one_or_none()
+    # Check if db is async or sync session
+    if isinstance(db, AsyncSession):
+        result = await db.execute(select(User).where(User.email == token_data.email))
+        user = result.scalar_one_or_none()
+    else:
+        # Sync session (for tests)
+        result = db.execute(select(User).where(User.email == token_data.email))
+        user = result.scalar_one_or_none()
+    
     if user is None:
         raise credentials_exception
     return user

@@ -1,20 +1,21 @@
 import csv
 import io
 from datetime import date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 from app.models.client import Client
 from app.models.allocation import Allocation
 from app.models.movement import Movement, MovementType
 from app.models.asset import Asset
+from app.core.db_helpers import DBHelper
 
 class ExportService:
     @staticmethod
-    async def export_clients_to_csv(db: AsyncSession) -> StreamingResponse:
-        result = await db.execute(select(Client))
-        clients = result.scalars().all()
+    async def export_clients_to_csv(db: Union[AsyncSession, Session]) -> StreamingResponse:
+        clients = await DBHelper.get_all(db, Client)
         
         output = io.StringIO()
         writer = csv.writer(output)
@@ -40,7 +41,34 @@ class ExportService:
         )
     
     @staticmethod
-    async def export_allocations_to_csv(db: AsyncSession) -> StreamingResponse:
+    async def export_assets_to_csv(db: Union[AsyncSession, Session]) -> StreamingResponse:
+        assets = await DBHelper.get_all(db, Asset)
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(["ID", "Ticker", "Name", "Exchange", "Currency"])
+        
+        # Data
+        for asset in assets:
+            writer.writerow([
+                asset.id,
+                asset.ticker,
+                asset.name,
+                asset.exchange or "",
+                asset.currency
+            ])
+        
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=assets.csv"}
+        )
+    
+    @staticmethod
+    async def export_allocations_to_csv(db: Union[AsyncSession, Session]) -> StreamingResponse:
         query = (
             select(
                 Allocation,
@@ -52,7 +80,7 @@ class ExportService:
             .join(Asset, Allocation.asset_id == Asset.id)
         )
         
-        result = await db.execute(query)
+        result = await DBHelper.execute_query(db, query)
         allocations = result.all()
         
         output = io.StringIO()
@@ -87,7 +115,7 @@ class ExportService:
     
     @staticmethod
     async def export_movements_to_csv(
-        db: AsyncSession, 
+        db: Union[AsyncSession, Session], 
         start_date: date = None, 
         end_date: date = None
     ) -> StreamingResponse:
@@ -101,7 +129,7 @@ class ExportService:
         if end_date:
             query = query.where(Movement.date <= end_date)
         
-        result = await db.execute(query)
+        result = await DBHelper.execute_query(db, query)
         movements = result.all()
         
         output = io.StringIO()

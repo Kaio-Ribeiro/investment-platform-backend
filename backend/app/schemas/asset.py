@@ -10,6 +10,12 @@ class AssetBase(BaseModel):
 class AssetCreate(AssetBase):
     pass
 
+class AssetUpdate(BaseModel):
+    ticker: Optional[str] = None
+    name: Optional[str] = None
+    exchange: Optional[str] = None
+    currency: Optional[str] = None
+
 class Asset(AssetBase):
     id: int
 

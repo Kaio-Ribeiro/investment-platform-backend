@@ -5,9 +5,10 @@ from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
+from app.core.db_helpers import DBHelper
 from app.models.asset import Asset
 from app.models.user import User
-from app.schemas.asset import Asset as AssetSchema, AssetCreate, YahooFinanceAsset
+from app.schemas.asset import Asset as AssetSchema, AssetCreate, AssetUpdate, YahooFinanceAsset
 from app.services.yahoo_finance import yahoo_finance
 
 router = APIRouter()
@@ -17,11 +18,19 @@ async def read_assets(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db = Depends(get_db)
 ):
-    result = await db.execute(select(Asset).offset(skip).limit(limit))
-    assets = result.scalars().all()
-    return assets
+    assets = await DBHelper.get_all(db, Asset)
+    return assets[skip:skip+limit]
+
+@router.post("/", response_model=AssetSchema)
+async def create_asset(
+    asset: AssetCreate,
+    current_user: User = Depends(get_current_active_user),
+    db = Depends(get_db)
+):
+    db_asset = Asset(**asset.model_dump())
+    return await DBHelper.add_and_commit(db, db_asset)
 
 @router.get("/search-yahoo/{symbol}", response_model=Optional[YahooFinanceAsset])
 async def search_yahoo_asset(
@@ -35,14 +44,13 @@ async def search_yahoo_asset(
 async def create_asset_from_yahoo(
     symbol: str, 
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db = Depends(get_db)
 ):
     # Verificar se asset já existe
-    result = await db.execute(select(Asset).where(Asset.ticker == symbol.upper()))
-    existing_asset = result.scalar_one_or_none()
+    existing_assets = await DBHelper.get_by_filter(db, Asset, ticker=symbol.upper())
     
-    if existing_asset:
-        return existing_asset
+    if existing_assets:
+        return existing_assets[0]
     
     # Buscar dados do Yahoo Finance
     asset_data = await yahoo_finance.search_asset(symbol)
@@ -51,39 +59,63 @@ async def create_asset_from_yahoo(
     
     # Criar asset no banco
     db_asset = Asset(**asset_data)
-    db.add(db_asset)
-    await db.commit()
-    await db.refresh(db_asset)
-    return db_asset
-
-@router.post("/", response_model=AssetSchema)
-async def create_asset(
-    asset: AssetCreate, 
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    # Verificar se ticker já existe
-    result = await db.execute(select(Asset).where(Asset.ticker == asset.ticker))
-    existing_asset = result.scalar_one_or_none()
-    
-    if existing_asset:
-        raise HTTPException(status_code=400, detail="Asset with this ticker already exists")
-    
-    db_asset = Asset(**asset.dict())
-    db.add(db_asset)
-    await db.commit()
-    await db.refresh(db_asset)
-    return db_asset
+    return await DBHelper.add_and_commit(db, db_asset)
 
 @router.get("/{asset_id}", response_model=AssetSchema)
 async def read_asset(
     asset_id: int, 
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db = Depends(get_db)
 ):
-    result = await db.execute(select(Asset).where(Asset.id == asset_id))
-    asset = result.scalar_one_or_none()
-    
+    asset = await DBHelper.get_by_id(db, Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset
+
+@router.put("/{asset_id}", response_model=AssetSchema)
+async def update_asset(
+    asset_id: int,
+    asset: AssetUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db = Depends(get_db)
+):
+    db_asset = await DBHelper.get_by_id(db, Asset, asset_id)
+    if db_asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    for key, value in asset.model_dump(exclude_unset=True).items():
+        setattr(db_asset, key, value)
+    
+    await DBHelper.commit(db)
+    await DBHelper.refresh(db, db_asset)
+    return db_asset
+
+@router.delete("/{asset_id}")
+async def delete_asset(
+    asset_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db = Depends(get_db)
+):
+    db_asset = await DBHelper.get_by_id(db, Asset, asset_id)
+    if db_asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    await DBHelper.delete_obj(db, db_asset)
+    return {"ok": True}
+
+@router.get("/{asset_id}/price")
+async def get_asset_price(
+    asset_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db = Depends(get_db)
+):
+    asset = await DBHelper.get_by_id(db, Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Get current price from Yahoo Finance
+    try:
+        price_data = await yahoo_finance.get_current_price(asset.ticker)
+        return {"asset_id": asset_id, "ticker": asset.ticker, "current_price": price_data}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail="Unable to fetch current price")
