@@ -37,8 +37,25 @@ async def search_yahoo_asset(
     symbol: str,
     current_user: User = Depends(get_current_active_user)
 ):
+    """
+    Busca informações de um ativo no Yahoo Finance
+    """
     asset_data = await yahoo_finance.search_asset(symbol)
     return asset_data
+
+@router.get("/history-yahoo/{symbol}")
+async def get_yahoo_history(
+    symbol: str,
+    period: str = "1mo",
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Obtém histórico de preços do Yahoo Finance
+    """
+    history_data = await yahoo_finance.get_stock_history(symbol, period)
+    if not history_data:
+        raise HTTPException(status_code=404, detail="Histórico não encontrado")
+    return history_data
 
 @router.post("/from-yahoo/{symbol}", response_model=AssetSchema)
 async def create_asset_from_yahoo(
