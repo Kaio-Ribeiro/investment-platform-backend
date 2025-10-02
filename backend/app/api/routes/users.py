@@ -5,15 +5,16 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
-from app.core.security import get_password_hash, verify_password
+from app.core.security import get_password_hash, verify_password, create_access_token
 from app.models.user import User
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
+from app.schemas.auth import Token
 
 router = APIRouter()
 
 # NOVOS ENDPOINTS ↓
 
-@router.post("/register", response_model=UserSchema)
+@router.post("/register", response_model=Token)
 async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     # Verificar se usuário já existe
     result = await db.execute(select(User).where(User.email == user_data.email))
@@ -36,7 +37,10 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
-    return db_user
+    
+    # Criar token de acesso para o novo usuário
+    access_token = create_access_token(data={"sub": db_user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/", response_model=list[UserSchema])
 async def read_users(
